@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Monaco Lua Pro - Persistente</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
     <style>
         :root {
@@ -36,12 +35,18 @@
             border-bottom: 1px solid var(--border);
             align-items: center;
             padding-right: 10px;
+            position: relative;
         }
 
         #tabs-container {
             display: flex;
             overflow-x: auto;
             flex-grow: 1;
+            scrollbar-width: none;
+        }
+
+        #tabs-container::-webkit-scrollbar {
+            display: none;
         }
 
         .tab {
@@ -62,7 +67,16 @@
         .tab.active {
             background-color: var(--tab-active);
             color: var(--text-active);
-            border-bottom: 2px solid var(--accent);
+        }
+
+        .tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background-color: var(--accent);
         }
 
         .tab span {
@@ -94,7 +108,8 @@
 
         .tab .close-btn:hover {
             opacity: 1;
-            background-color: rgba(255,255,255,0.1);
+            background-color: #e81123;
+            color: white;
         }
 
         #add-tab {
@@ -102,10 +117,12 @@
             cursor: pointer;
             font-size: 18px;
             color: var(--text-main);
+            transition: transform 0.2s;
         }
 
         #add-tab:hover {
             color: var(--text-active);
+            transform: scale(1.2);
         }
 
         #editor-container {
@@ -118,7 +135,7 @@
 
     <div id="header">
         <div id="tabs-container"></div>
-        <div id="add-tab" title="Novo Arquivo (Alt+N)">+</div>
+        <div id="add-tab" title="Novo Arquivo">+</div >
     </div>
     <div id="editor-container"></div>
 
@@ -127,11 +144,11 @@
 
         let editor;
         const STORAGE_KEY = 'monaco_lua_editor_data';
+        const DEFAULT_CONTENT = 'print("mercury executor")';
         
-        // Dados Iniciais (Carrega do LocalStorage ou define padrão)
         let savedData = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {
             files: {
-                'main.lua': { content: '-- Bem-vindo!\nprint("Olá")' }
+                'main.lua': { content: DEFAULT_CONTENT }
             },
             activeFile: 'main.lua',
             fileCount: 1
@@ -143,9 +160,16 @@
 
         require(['vs/editor/editor.main'], function () {
             
-            // Provedor de Sugestões Lua
+            // Recomendações Expandidas
             const luaKeywords = ['and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function', 'if', 'in', 'local', 'nil', 'not', 'or', 'repeat', 'return', 'then', 'true', 'until', 'while', 'goto'];
-            const luaGlobals = ['assert', 'print', 'math', 'string', 'table', 'os', 'io', 'pairs', 'ipairs', 'tonumber', 'tostring', 'type', 'printidentity'];
+            const luaGlobals = ['print', 'printidentity', 'warn', 'error', 'assert', 'type', 'tostring', 'tonumber', 'getmetatable', 'setmetatable', 'pairs', 'ipairs', 'next', 'unpack', 'pcall', 'xpcall', 'select', 'require'];
+            const luaLibs = {
+                'math': ['abs', 'acos', 'asin', 'atan', 'ceil', 'cos', 'deg', 'exp', 'floor', 'fmod', 'huge', 'log', 'max', 'min', 'modf', 'pi', 'rad', 'random', 'randomseed', 'sin', 'sqrt', 'tan', 'ult'],
+                'table': ['concat', 'insert', 'pack', 'remove', 'sort', 'unpack', 'find', 'move', 'clear'],
+                'string': ['byte', 'char', 'find', 'format', 'gmatch', 'gsub', 'len', 'lower', 'match', 'rep', 'reverse', 'sub', 'upper'],
+                'os': ['clock', 'date', 'difftime', 'time'],
+                'task': ['wait', 'spawn', 'defer', 'delay']
+            };
 
             monaco.languages.registerCompletionItemProvider('lua', {
                 provideCompletionItems: (model, position) => {
@@ -154,33 +178,50 @@
                         startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
                         startColumn: word.startColumn, endColumn: word.endColumn
                     };
-                    const suggestions = [
+
+                    let suggestions = [
                         ...luaKeywords.map(k => ({ label: k, kind: monaco.languages.CompletionItemKind.Keyword, insertText: k, range })),
-                        ...luaGlobals.map(g => ({ label: g, kind: monaco.languages.CompletionItemKind.Function, insertText: g + (g.includes('.') ? '' : '()'), range })),
-                        {
-                            label: 'func', kind: monaco.languages.CompletionItemKind.Snippet,
-                            insertText: 'function ${1:name}(${2:args})\n\t$0\nend',
-                            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-                            range
-                        }
+                        ...luaGlobals.map(g => ({ label: g, kind: monaco.languages.CompletionItemKind.Function, insertText: g + '($1)', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range }))
                     ];
+
+                    Object.keys(luaLibs).forEach(lib => {
+                        luaLibs[lib].forEach(func => {
+                            suggestions.push({
+                                label: `${lib}.${func}`,
+                                kind: monaco.languages.CompletionItemKind.Method,
+                                insertText: `${lib}.${func}($1)`,
+                                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                                range
+                            });
+                        });
+                    });
+
                     return { suggestions };
                 }
             });
 
-            // Criar Editor
+            // Criar Editor com Animação de I-Beam Suave
             editor = monaco.editor.create(document.getElementById('editor-container'), {
-                value: files[activeFile] ? files[activeFile].content : '',
+                value: files[activeFile] ? files[activeFile].content : DEFAULT_CONTENT,
                 language: 'lua',
                 theme: 'vs-dark',
                 automaticLayout: true,
                 tabSize: 4,
                 insertSpaces: true,
                 suggestSelection: 'first',
-                tabCompletion: 'on'
+                tabCompletion: 'on',
+                
+                // Animações do Cursor (I-Beam)
+                cursorBlinking: "expand",           // O cursor "estica" ao piscar
+                cursorSmoothCaretAnimation: "on",   // O cursor desliza suavemente entre caracteres
+                smoothScrolling: true,              // Scroll suave
+                mouseWheelZoom: true,
+                
+                fontFamily: 'Consolas, monospace',
+                fontSize: 14,
+                renderLineHighlight: "all"
             });
 
-            // Persistência automática
             editor.onDidChangeModelContent(() => {
                 if (files[activeFile]) {
                     files[activeFile].content = editor.getValue();
@@ -189,35 +230,30 @@
             });
 
             function saveToLocalStorage() {
-                const dataToSave = {
-                    files: files,
-                    activeFile: activeFile,
-                    fileCount: fileCount
-                };
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
+                localStorage.setItem(STORAGE_KEY, JSON.stringify({ files, activeFile, fileCount }));
             }
 
-            // Gerenciamento de Abas
             function renderTabs() {
                 const container = document.getElementById('tabs-container');
                 container.innerHTML = '';
                 
-                Object.keys(files).forEach(fileName => {
+                const sortedKeys = Object.keys(files).sort((a, b) => {
+                    if (a === 'main.lua') return -1;
+                    if (b === 'main.lua') return 1;
+                    return a.localeCompare(b);
+                });
+
+                sortedKeys.forEach(fileName => {
                     const tab = document.createElement('div');
                     tab.className = `tab ${fileName === activeFile ? 'active' : ''}`;
                     
                     const nameSpan = document.createElement('span');
                     nameSpan.textContent = fileName;
-                    nameSpan.title = "Clique duplo para renomear";
-                    
-                    // Troca de arquivo
                     nameSpan.onclick = () => switchFile(fileName);
                     
-                    // Renomear (Clique Duplo)
                     nameSpan.ondblclick = () => {
                         nameSpan.contentEditable = true;
                         nameSpan.focus();
-                        // Selecionar texto todo ao entrar
                         const range = document.createRange();
                         range.selectNodeContents(nameSpan);
                         const sel = window.getSelection();
@@ -231,10 +267,7 @@
                     };
 
                     nameSpan.onkeydown = (e) => {
-                        if (e.key === 'Enter') {
-                            e.preventDefault();
-                            nameSpan.blur();
-                        }
+                        if (e.key === 'Enter') { e.preventDefault(); nameSpan.blur(); }
                     };
                     
                     const closeBtn = document.createElement('div');
@@ -252,10 +285,7 @@
             }
 
             function renameFile(oldName, newName) {
-                if (!newName || oldName === newName || files[newName]) {
-                    renderTabs(); // Cancela ou impede duplicata
-                    return;
-                }
+                if (!newName || oldName === newName || files[newName]) { renderTabs(); return; }
                 files[newName] = files[oldName];
                 delete files[oldName];
                 if (activeFile === oldName) activeFile = newName;
@@ -275,9 +305,14 @@
 
             function closeFile(fileName) {
                 const keys = Object.keys(files);
-                if (keys.length <= 1) return;
-                delete files[fileName];
-                if (activeFile === fileName) activeFile = Object.keys(files)[0];
+                if (keys.length <= 1) {
+                    delete files[fileName];
+                    files['main.lua'] = { content: DEFAULT_CONTENT };
+                    activeFile = 'main.lua';
+                } else {
+                    delete files[fileName];
+                    if (activeFile === fileName) activeFile = Object.keys(files)[0];
+                }
                 switchFile(activeFile);
                 saveToLocalStorage();
                 renderTabs();
@@ -285,8 +320,8 @@
 
             document.getElementById('add-tab').onclick = () => {
                 fileCount++;
-                const newName = `novo_${fileCount}.lua`;
-                files[newName] = { content: '-- Novo script' };
+                const newName = `script_${fileCount}.lua`;
+                files[newName] = { content: DEFAULT_CONTENT };
                 switchFile(newName);
             };
 
