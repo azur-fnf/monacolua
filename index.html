@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Xique-Xique - BA Filé de Borboleta 2077</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
     <style>
         :root {
@@ -42,11 +43,12 @@
             display: flex;
             overflow-x: auto;
             flex-grow: 1;
-            scrollbar-width: none;
+            scrollbar-width: none; /* Firefox */
+            scroll-behavior: smooth;
         }
 
         #tabs-container::-webkit-scrollbar {
-            display: none;
+            display: none; /* Chrome/Safari */
         }
 
         .tab {
@@ -61,7 +63,14 @@
             max-width: 200px;
             user-select: none;
             position: relative;
-            transition: background 0.2s;
+            transition: background 0.2s, opacity 0.2s;
+            flex-shrink: 0;
+        }
+
+        /* Efeito visual para arrastar */
+        .tab.dragging {
+            opacity: 0.5;
+            background-color: var(--accent);
         }
 
         .tab.active {
@@ -86,9 +95,12 @@
             text-overflow: ellipsis;
             margin-right: 8px;
             outline: none;
+            pointer-events: none; /* Evita interferência no drag */
         }
-
+        
+        /* Permite cliques no span apenas quando for editar nome */
         .tab span[contenteditable="true"] {
+            pointer-events: auto;
             background: rgba(255,255,255,0.1);
             padding: 2px 4px;
             border-radius: 2px;
@@ -104,6 +116,7 @@
             justify-content: center;
             border-radius: 3px;
             opacity: 0.6;
+            pointer-events: auto;
         }
 
         .tab .close-btn:hover {
@@ -118,6 +131,9 @@
             font-size: 18px;
             color: var(--text-main);
             transition: transform 0.2s;
+            flex-shrink: 0;
+            background-color: var(--tab-bar-bg);
+            z-index: 10;
         }
 
         #add-tab:hover {
@@ -151,16 +167,18 @@
                 'main.lua': { content: DEFAULT_CONTENT }
             },
             activeFile: 'main.lua',
-            fileCount: 1
+            fileCount: 1,
+            order: ['main.lua']
         };
 
         let files = savedData.files;
         let activeFile = savedData.activeFile;
         let fileCount = savedData.fileCount;
+        let tabOrder = savedData.order || Object.keys(files);
 
         require(['vs/editor/editor.main'], function () {
             
-            // Recomendações Expandidas
+            // Provedor de Sugestões Lua
             const luaKeywords = ['and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function', 'if', 'in', 'local', 'nil', 'not', 'or', 'repeat', 'return', 'then', 'true', 'until', 'while', 'goto'];
             const luaGlobals = ['print', 'printidentity', 'warn', 'error', 'assert', 'type', 'tostring', 'tonumber', 'getmetatable', 'setmetatable', 'pairs', 'ipairs', 'next', 'unpack', 'pcall', 'xpcall', 'select', 'require'];
             const luaLibs = {
@@ -178,12 +196,10 @@
                         startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
                         startColumn: word.startColumn, endColumn: word.endColumn
                     };
-
                     let suggestions = [
                         ...luaKeywords.map(k => ({ label: k, kind: monaco.languages.CompletionItemKind.Keyword, insertText: k, range })),
                         ...luaGlobals.map(g => ({ label: g, kind: monaco.languages.CompletionItemKind.Function, insertText: g + '($1)', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range }))
                     ];
-
                     Object.keys(luaLibs).forEach(lib => {
                         luaLibs[lib].forEach(func => {
                             suggestions.push({
@@ -195,12 +211,10 @@
                             });
                         });
                     });
-
                     return { suggestions };
                 }
             });
 
-            // Criar Editor com Animação de I-Beam Suave
             editor = monaco.editor.create(document.getElementById('editor-container'), {
                 value: files[activeFile] ? files[activeFile].content : DEFAULT_CONTENT,
                 language: 'lua',
@@ -210,13 +224,10 @@
                 insertSpaces: true,
                 suggestSelection: 'first',
                 tabCompletion: 'on',
-                
-                // Animações do Cursor (I-Beam)
-                cursorBlinking: "expand",           // O cursor "estica" ao piscar
-                cursorSmoothCaretAnimation: "on",   // O cursor desliza suavemente entre caracteres
-                smoothScrolling: true,              // Scroll suave
+                cursorBlinking: "expand",
+                cursorSmoothCaretAnimation: "on",
+                smoothScrolling: true,
                 mouseWheelZoom: true,
-                
                 fontFamily: 'Consolas, monospace',
                 fontSize: 14,
                 renderLineHighlight: "all"
@@ -230,28 +241,38 @@
             });
 
             function saveToLocalStorage() {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify({ files, activeFile, fileCount }));
+                localStorage.setItem(STORAGE_KEY, JSON.stringify({ files, activeFile, fileCount, order: tabOrder }));
             }
 
+            // --- Lógica de Drag and Drop e Scroll ---
+            const container = document.getElementById('tabs-container');
+
+            // Scroll horizontal com a roda do mouse
+            container.addEventListener('wheel', (e) => {
+                if (e.deltaY !== 0) {
+                    container.scrollLeft += e.deltaY;
+                    e.preventDefault();
+                }
+            });
+
             function renderTabs() {
-                const container = document.getElementById('tabs-container');
                 container.innerHTML = '';
                 
-                const sortedKeys = Object.keys(files).sort((a, b) => {
-                    if (a === 'main.lua') return -1;
-                    if (b === 'main.lua') return 1;
-                    return a.localeCompare(b);
-                });
+                tabOrder.forEach((fileName, index) => {
+                    if (!files[fileName]) return;
 
-                sortedKeys.forEach(fileName => {
                     const tab = document.createElement('div');
                     tab.className = `tab ${fileName === activeFile ? 'active' : ''}`;
+                    tab.draggable = true;
+                    tab.dataset.filename = fileName;
                     
                     const nameSpan = document.createElement('span');
                     nameSpan.textContent = fileName;
-                    nameSpan.onclick = () => switchFile(fileName);
                     
-                    nameSpan.ondblclick = () => {
+                    tab.onclick = () => switchFile(fileName);
+                    
+                    tab.ondblclick = (e) => {
+                        e.stopPropagation();
                         nameSpan.contentEditable = true;
                         nameSpan.focus();
                         const range = document.createRange();
@@ -280,14 +301,60 @@
 
                     tab.appendChild(nameSpan);
                     tab.appendChild(closeBtn);
+
+                    // Eventos de Drag and Drop
+                    tab.addEventListener('dragstart', (e) => {
+                        tab.classList.add('dragging');
+                        e.dataTransfer.setData('text/plain', index);
+                    });
+
+                    tab.addEventListener('dragend', () => {
+                        tab.classList.remove('dragging');
+                    });
+
+                    tab.addEventListener('dragover', (e) => {
+                        e.preventDefault();
+                        const draggingTab = document.querySelector('.dragging');
+                        const afterElement = getDragAfterElement(container, e.clientX);
+                        if (afterElement == null) {
+                            container.appendChild(draggingTab);
+                        } else {
+                            container.insertBefore(draggingTab, afterElement);
+                        }
+                    });
+
+                    tab.addEventListener('drop', (e) => {
+                        e.preventDefault();
+                        // Atualiza a ordem baseada na nova posição do DOM
+                        const newOrder = Array.from(container.querySelectorAll('.tab'))
+                                              .map(t => t.dataset.filename);
+                        tabOrder = newOrder;
+                        saveToLocalStorage();
+                    });
+
                     container.appendChild(tab);
                 });
+            }
+
+            function getDragAfterElement(container, x) {
+                const draggableElements = [...container.querySelectorAll('.tab:not(.dragging)')];
+                return draggableElements.reduce((closest, child) => {
+                    const box = child.getBoundingClientRect();
+                    const offset = x - box.left - box.width / 2;
+                    if (offset < 0 && offset > closest.offset) {
+                        return { offset: offset, element: child };
+                    } else {
+                        return closest;
+                    }
+                }, { offset: Number.NEGATIVE_INFINITY }).element;
             }
 
             function renameFile(oldName, newName) {
                 if (!newName || oldName === newName || files[newName]) { renderTabs(); return; }
                 files[newName] = files[oldName];
                 delete files[oldName];
+                const index = tabOrder.indexOf(oldName);
+                if (index !== -1) tabOrder[index] = newName;
                 if (activeFile === oldName) activeFile = newName;
                 saveToLocalStorage();
                 renderTabs();
@@ -304,14 +371,15 @@
             }
 
             function closeFile(fileName) {
-                const keys = Object.keys(files);
-                if (keys.length <= 1) {
+                if (Object.keys(files).length <= 1) {
                     delete files[fileName];
                     files['main.lua'] = { content: DEFAULT_CONTENT };
                     activeFile = 'main.lua';
+                    tabOrder = ['main.lua'];
                 } else {
                     delete files[fileName];
-                    if (activeFile === fileName) activeFile = Object.keys(files)[0];
+                    tabOrder = tabOrder.filter(name => name !== fileName);
+                    if (activeFile === fileName) activeFile = tabOrder[0];
                 }
                 switchFile(activeFile);
                 saveToLocalStorage();
@@ -322,7 +390,10 @@
                 fileCount++;
                 const newName = `script_${fileCount}.lua`;
                 files[newName] = { content: DEFAULT_CONTENT };
+                tabOrder.push(newName);
                 switchFile(newName);
+                // Auto scroll para a nova aba
+                setTimeout(() => { container.scrollLeft = container.scrollWidth; }, 50);
             };
 
             renderTabs();
