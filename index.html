@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monaco Lua Pro - Persistente</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+    <style>
+        :root {
+            --bg-dark: #1e1e1e;
+            --tab-bar-bg: #252526;
+            --tab-inactive: #2d2d2d;
+            --tab-active: #1e1e1e;
+            --text-main: #cccccc;
+            --text-active: #ffffff;
+            --border: #333333;
+            --accent: #007acc;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: 'Segoe UI', Tahoma, sans-serif;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        #header {
+            display: flex;
+            background-color: var(--tab-bar-bg);
+            border-bottom: 1px solid var(--border);
+            align-items: center;
+            padding-right: 10px;
+        }
+
+        #tabs-container {
+            display: flex;
+            overflow-x: auto;
+            flex-grow: 1;
+        }
+
+        .tab {
+            display: flex;
+            align-items: center;
+            padding: 8px 12px;
+            background-color: var(--tab-inactive);
+            border-right: 1px solid var(--border);
+            cursor: pointer;
+            font-size: 13px;
+            min-width: 120px;
+            max-width: 200px;
+            user-select: none;
+            position: relative;
+            transition: background 0.2s;
+        }
+
+        .tab.active {
+            background-color: var(--tab-active);
+            color: var(--text-active);
+            border-bottom: 2px solid var(--accent);
+        }
+
+        .tab span {
+            flex-grow: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-right: 8px;
+            outline: none;
+        }
+
+        .tab span[contenteditable="true"] {
+            background: rgba(255,255,255,0.1);
+            padding: 2px 4px;
+            border-radius: 2px;
+            cursor: text;
+        }
+
+        .tab .close-btn {
+            font-size: 14px;
+            width: 16px;
+            height: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 3px;
+            opacity: 0.6;
+        }
+
+        .tab .close-btn:hover {
+            opacity: 1;
+            background-color: rgba(255,255,255,0.1);
+        }
+
+        #add-tab {
+            padding: 5px 12px;
+            cursor: pointer;
+            font-size: 18px;
+            color: var(--text-main);
+        }
+
+        #add-tab:hover {
+            color: var(--text-active);
+        }
+
+        #editor-container {
+            flex-grow: 1;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="header">
+        <div id="tabs-container"></div>
+        <div id="add-tab" title="Novo Arquivo (Alt+N)">+</div>
+    </div>
+    <div id="editor-container"></div>
+
+    <script>
+        require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' } });
+
+        let editor;
+        const STORAGE_KEY = 'monaco_lua_editor_data';
+        
+        // Dados Iniciais (Carrega do LocalStorage ou define padrão)
+        let savedData = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {
+            files: {
+                'main.lua': { content: '-- Bem-vindo!\nprint("Olá")' }
+            },
+            activeFile: 'main.lua',
+            fileCount: 1
+        };
+
+        let files = savedData.files;
+        let activeFile = savedData.activeFile;
+        let fileCount = savedData.fileCount;
+
+        require(['vs/editor/editor.main'], function () {
+            
+            // Provedor de Sugestões Lua
+            const luaKeywords = ['and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function', 'if', 'in', 'local', 'nil', 'not', 'or', 'repeat', 'return', 'then', 'true', 'until', 'while', 'goto'];
+            const luaGlobals = ['assert', 'print', 'math', 'string', 'table', 'os', 'io', 'pairs', 'ipairs', 'tonumber', 'tostring', 'type', 'printidentity'];
+
+            monaco.languages.registerCompletionItemProvider('lua', {
+                provideCompletionItems: (model, position) => {
+                    const word = model.getWordUntilPosition(position);
+                    const range = {
+                        startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
+                        startColumn: word.startColumn, endColumn: word.endColumn
+                    };
+                    const suggestions = [
+                        ...luaKeywords.map(k => ({ label: k, kind: monaco.languages.CompletionItemKind.Keyword, insertText: k, range })),
+                        ...luaGlobals.map(g => ({ label: g, kind: monaco.languages.CompletionItemKind.Function, insertText: g + (g.includes('.') ? '' : '()'), range })),
+                        {
+                            label: 'func', kind: monaco.languages.CompletionItemKind.Snippet,
+                            insertText: 'function ${1:name}(${2:args})\n\t$0\nend',
+                            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                            range
+                        }
+                    ];
+                    return { suggestions };
+                }
+            });
+
+            // Criar Editor
+            editor = monaco.editor.create(document.getElementById('editor-container'), {
+                value: files[activeFile] ? files[activeFile].content : '',
+                language: 'lua',
+                theme: 'vs-dark',
+                automaticLayout: true,
+                tabSize: 4,
+                insertSpaces: true,
+                suggestSelection: 'first',
+                tabCompletion: 'on'
+            });
+
+            // Persistência automática
+            editor.onDidChangeModelContent(() => {
+                if (files[activeFile]) {
+                    files[activeFile].content = editor.getValue();
+                    saveToLocalStorage();
+                }
+            });
+
+            function saveToLocalStorage() {
+                const dataToSave = {
+                    files: files,
+                    activeFile: activeFile,
+                    fileCount: fileCount
+                };
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
+            }
+
+            // Gerenciamento de Abas
+            function renderTabs() {
+                const container = document.getElementById('tabs-container');
+                container.innerHTML = '';
+                
+                Object.keys(files).forEach(fileName => {
+                    const tab = document.createElement('div');
+                    tab.className = `tab ${fileName === activeFile ? 'active' : ''}`;
+                    
+                    const nameSpan = document.createElement('span');
+                    nameSpan.textContent = fileName;
+                    nameSpan.title = "Clique duplo para renomear";
+                    
+                    // Troca de arquivo
+                    nameSpan.onclick = () => switchFile(fileName);
+                    
+                    // Renomear (Clique Duplo)
+                    nameSpan.ondblclick = () => {
+                        nameSpan.contentEditable = true;
+                        nameSpan.focus();
+                        // Selecionar texto todo ao entrar
+                        const range = document.createRange();
+                        range.selectNodeContents(nameSpan);
+                        const sel = window.getSelection();
+                        sel.removeAllRanges();
+                        sel.addRange(range);
+                    };
+
+                    nameSpan.onblur = () => {
+                        nameSpan.contentEditable = false;
+                        renameFile(fileName, nameSpan.textContent.trim());
+                    };
+
+                    nameSpan.onkeydown = (e) => {
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            nameSpan.blur();
+                        }
+                    };
+                    
+                    const closeBtn = document.createElement('div');
+                    closeBtn.className = 'close-btn';
+                    closeBtn.innerHTML = '×';
+                    closeBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        closeFile(fileName);
+                    };
+
+                    tab.appendChild(nameSpan);
+                    tab.appendChild(closeBtn);
+                    container.appendChild(tab);
+                });
+            }
+
+            function renameFile(oldName, newName) {
+                if (!newName || oldName === newName || files[newName]) {
+                    renderTabs(); // Cancela ou impede duplicata
+                    return;
+                }
+                files[newName] = files[oldName];
+                delete files[oldName];
+                if (activeFile === oldName) activeFile = newName;
+                saveToLocalStorage();
+                renderTabs();
+            }
+
+            function switchFile(fileName) {
+                if (activeFile === fileName || !files[fileName]) return;
+                files[activeFile].state = editor.saveViewState();
+                activeFile = fileName;
+                editor.setValue(files[fileName].content);
+                if (files[fileName].state) editor.restoreViewState(files[fileName].state);
+                saveToLocalStorage();
+                renderTabs();
+            }
+
+            function closeFile(fileName) {
+                const keys = Object.keys(files);
+                if (keys.length <= 1) return;
+                delete files[fileName];
+                if (activeFile === fileName) activeFile = Object.keys(files)[0];
+                switchFile(activeFile);
+                saveToLocalStorage();
+                renderTabs();
+            }
+
+            document.getElementById('add-tab').onclick = () => {
+                fileCount++;
+                const newName = `novo_${fileCount}.lua`;
+                files[newName] = { content: '-- Novo script' };
+                switchFile(newName);
+            };
+
+            renderTabs();
+        });
+    </script>
+</body>
+</html>
