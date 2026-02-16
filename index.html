@@ -43,12 +43,12 @@
             display: flex;
             overflow-x: auto;
             flex-grow: 1;
-            scrollbar-width: none; /* Firefox */
+            scrollbar-width: none;
             scroll-behavior: smooth;
         }
 
         #tabs-container::-webkit-scrollbar {
-            display: none; /* Chrome/Safari */
+            display: none;
         }
 
         .tab {
@@ -67,7 +67,6 @@
             flex-shrink: 0;
         }
 
-        /* Efeito visual para arrastar */
         .tab.dragging {
             opacity: 0.5;
             background-color: var(--accent);
@@ -95,10 +94,9 @@
             text-overflow: ellipsis;
             margin-right: 8px;
             outline: none;
-            pointer-events: none; /* Evita interferência no drag */
+            pointer-events: none;
         }
         
-        /* Permite cliques no span apenas quando for editar nome */
         .tab span[contenteditable="true"] {
             pointer-events: auto;
             background: rgba(255,255,255,0.1);
@@ -125,7 +123,7 @@
             color: white;
         }
 
-        #add-tab {
+        .header-btn {
             padding: 5px 12px;
             cursor: pointer;
             font-size: 18px;
@@ -134,11 +132,13 @@
             flex-shrink: 0;
             background-color: var(--tab-bar-bg);
             z-index: 10;
+            display: flex;
+            align-items: center;
         }
 
-        #add-tab:hover {
+        .header-btn:hover {
             color: var(--text-active);
-            transform: scale(1.2);
+            transform: scale(1.1);
         }
 
         #editor-container {
@@ -151,7 +151,8 @@
 
     <div id="header">
         <div id="tabs-container"></div>
-        <div id="add-tab" title="Novo Arquivo">+</div >
+        <div id="add-tab" class="header-btn" title="Novo Arquivo">+</div>
+        <div id="download-backup" class="header-btn" title="Baixar Backup (JSON)" style="font-size: 14px; margin-left: 5px;">💾</div>
     </div>
     <div id="editor-container"></div>
 
@@ -178,15 +179,17 @@
 
         require(['vs/editor/editor.main'], function () {
             
-            // Provedor de Sugestões Lua
+            // Sugestões Lua Ultra Expandidas
             const luaKeywords = ['and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function', 'if', 'in', 'local', 'nil', 'not', 'or', 'repeat', 'return', 'then', 'true', 'until', 'while', 'goto'];
-            const luaGlobals = ['print', 'printidentity', 'warn', 'error', 'assert', 'type', 'tostring', 'tonumber', 'getmetatable', 'setmetatable', 'pairs', 'ipairs', 'next', 'unpack', 'pcall', 'xpcall', 'select', 'require'];
+            const luaGlobals = ['print', 'printidentity', 'warn', 'error', 'assert', 'type', 'tostring', 'tonumber', 'getmetatable', 'setmetatable', 'pairs', 'ipairs', 'next', 'unpack', 'pcall', 'xpcall', 'select', 'require', 'getgenv', 'getrenv', 'getreg', 'getgc'];
+            
             const luaLibs = {
                 'math': ['abs', 'acos', 'asin', 'atan', 'ceil', 'cos', 'deg', 'exp', 'floor', 'fmod', 'huge', 'log', 'max', 'min', 'modf', 'pi', 'rad', 'random', 'randomseed', 'sin', 'sqrt', 'tan', 'ult'],
-                'table': ['concat', 'insert', 'pack', 'remove', 'sort', 'unpack', 'find', 'move', 'clear'],
-                'string': ['byte', 'char', 'find', 'format', 'gmatch', 'gsub', 'len', 'lower', 'match', 'rep', 'reverse', 'sub', 'upper'],
+                'table': ['concat', 'insert', 'pack', 'remove', 'sort', 'unpack', 'find', 'move', 'clear', 'foreach', 'foreachi'],
+                'string': ['byte', 'char', 'find', 'format', 'gmatch', 'gsub', 'len', 'lower', 'match', 'rep', 'reverse', 'sub', 'upper', 'split'],
                 'os': ['clock', 'date', 'difftime', 'time'],
-                'task': ['wait', 'spawn', 'defer', 'delay']
+                'task': ['wait', 'spawn', 'defer', 'delay'],
+                'debug': ['getupvalue', 'setupvalue', 'getlocal', 'setlocal', 'getinfo', 'traceback', 'getconstant', 'getproto', 'getstack']
             };
 
             monaco.languages.registerCompletionItemProvider('lua', {
@@ -244,10 +247,8 @@
                 localStorage.setItem(STORAGE_KEY, JSON.stringify({ files, activeFile, fileCount, order: tabOrder }));
             }
 
-            // --- Lógica de Drag and Drop e Scroll ---
             const container = document.getElementById('tabs-container');
 
-            // Scroll horizontal com a roda do mouse
             container.addEventListener('wheel', (e) => {
                 if (e.deltaY !== 0) {
                     container.scrollLeft += e.deltaY;
@@ -257,81 +258,46 @@
 
             function renderTabs() {
                 container.innerHTML = '';
-                
                 tabOrder.forEach((fileName, index) => {
                     if (!files[fileName]) return;
-
                     const tab = document.createElement('div');
                     tab.className = `tab ${fileName === activeFile ? 'active' : ''}`;
                     tab.draggable = true;
                     tab.dataset.filename = fileName;
-                    
                     const nameSpan = document.createElement('span');
                     nameSpan.textContent = fileName;
-                    
                     tab.onclick = () => switchFile(fileName);
-                    
                     tab.ondblclick = (e) => {
                         e.stopPropagation();
                         nameSpan.contentEditable = true;
                         nameSpan.focus();
-                        const range = document.createRange();
-                        range.selectNodeContents(nameSpan);
-                        const sel = window.getSelection();
-                        sel.removeAllRanges();
-                        sel.addRange(range);
                     };
-
                     nameSpan.onblur = () => {
                         nameSpan.contentEditable = false;
                         renameFile(fileName, nameSpan.textContent.trim());
                     };
-
-                    nameSpan.onkeydown = (e) => {
-                        if (e.key === 'Enter') { e.preventDefault(); nameSpan.blur(); }
-                    };
-                    
+                    nameSpan.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); nameSpan.blur(); } };
                     const closeBtn = document.createElement('div');
                     closeBtn.className = 'close-btn';
                     closeBtn.innerHTML = '×';
-                    closeBtn.onclick = (e) => {
-                        e.stopPropagation();
-                        closeFile(fileName);
-                    };
-
+                    closeBtn.onclick = (e) => { e.stopPropagation(); closeFile(fileName); };
                     tab.appendChild(nameSpan);
                     tab.appendChild(closeBtn);
 
-                    // Eventos de Drag and Drop
-                    tab.addEventListener('dragstart', (e) => {
-                        tab.classList.add('dragging');
-                        e.dataTransfer.setData('text/plain', index);
-                    });
-
-                    tab.addEventListener('dragend', () => {
-                        tab.classList.remove('dragging');
-                    });
-
+                    tab.addEventListener('dragstart', (e) => { tab.classList.add('dragging'); });
+                    tab.addEventListener('dragend', () => { tab.classList.remove('dragging'); });
                     tab.addEventListener('dragover', (e) => {
                         e.preventDefault();
                         const draggingTab = document.querySelector('.dragging');
                         const afterElement = getDragAfterElement(container, e.clientX);
-                        if (afterElement == null) {
-                            container.appendChild(draggingTab);
-                        } else {
-                            container.insertBefore(draggingTab, afterElement);
-                        }
+                        if (afterElement == null) container.appendChild(draggingTab);
+                        else container.insertBefore(draggingTab, afterElement);
                     });
-
                     tab.addEventListener('drop', (e) => {
                         e.preventDefault();
-                        // Atualiza a ordem baseada na nova posição do DOM
-                        const newOrder = Array.from(container.querySelectorAll('.tab'))
-                                              .map(t => t.dataset.filename);
-                        tabOrder = newOrder;
+                        tabOrder = Array.from(container.querySelectorAll('.tab')).map(t => t.dataset.filename);
                         saveToLocalStorage();
                     });
-
                     container.appendChild(tab);
                 });
             }
@@ -341,11 +307,8 @@
                 return draggableElements.reduce((closest, child) => {
                     const box = child.getBoundingClientRect();
                     const offset = x - box.left - box.width / 2;
-                    if (offset < 0 && offset > closest.offset) {
-                        return { offset: offset, element: child };
-                    } else {
-                        return closest;
-                    }
+                    if (offset < 0 && offset > closest.offset) return { offset: offset, element: child };
+                    else return closest;
                 }, { offset: Number.NEGATIVE_INFINITY }).element;
             }
 
@@ -392,8 +355,18 @@
                 files[newName] = { content: DEFAULT_CONTENT };
                 tabOrder.push(newName);
                 switchFile(newName);
-                // Auto scroll para a nova aba
                 setTimeout(() => { container.scrollLeft = container.scrollWidth; }, 50);
+            };
+
+            // Função de Download de Backup
+            document.getElementById('download-backup').onclick = () => {
+                const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({files, tabOrder, fileCount}));
+                const downloadAnchorNode = document.createElement('a');
+                downloadAnchorNode.setAttribute("href", dataStr);
+                downloadAnchorNode.setAttribute("download", "mercury_backup_" + new Date().getTime() + ".json");
+                document.body.appendChild(downloadAnchorNode);
+                downloadAnchorNode.click();
+                downloadAnchorNode.remove();
             };
 
             renderTabs();
